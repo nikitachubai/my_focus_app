@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">FOCUSTIME</string>
+    <string name="accessibility_desc">Отслеживает активное приложение во время фокуса</string>
+    <string name="accessibility_label">FOCUSTIME App Watcher</string>
+</resources>

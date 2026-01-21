@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- ========================= -->
+    <!-- Android 11+ package visibility -->
+    <!-- ========================= -->
+    <queries>
+
+        <!-- Все launcher-приложения (чтобы видеть список приложений) -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+
+        <!-- Системные настройки (нужно для открытия экранов разрешений) -->
+        <package android:name="com.android.settings" />
+
+    </queries>
+
+    <!-- ========================= -->
+    <!-- Permissions -->
+    <!-- ========================= -->
+
+    <!-- Для Usage Stats (показывается в настройках) -->
+    <uses-permission
+        android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+
+    <!-- ========================= -->
+    <!-- Application -->
+    <!-- ========================= -->
+    <application
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.FOCUSTIME">
+
+        <!-- Main -->
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:theme="@style/Theme.FOCUSTIME">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+        </activity>
+
+        <!-- Block screen -->
+        <activity
+            android:name=".BlockActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTask"
+            android:taskAffinity=""
+            android:finishOnTaskLaunch="true" />
+
+        <!-- Accessibility Service -->
+        <service
+            android:name=".AppWatcherService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="false">
+
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+
+        </service>
+
+    </application>
+
+</manifest>
+
