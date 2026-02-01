@@ -36,11 +36,6 @@ class AppWatcherService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        //if (pkg in neverBlockExact) {
-         //   Log.d("FOCUSTIME", "Пропускаем свое приложение")
-         //   return
-        //        }
-
 
         if (event == null) return
 

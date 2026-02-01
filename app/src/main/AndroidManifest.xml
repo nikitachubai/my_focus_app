@@ -6,6 +6,7 @@
     <!-- ========================= -->
     <!-- Android 11+ package visibility -->
     <!-- ========================= -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
     <queries>
 
         <!-- Все launcher-приложения (чтобы видеть список приложений) -->

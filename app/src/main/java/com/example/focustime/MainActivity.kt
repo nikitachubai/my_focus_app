@@ -1,7 +1,10 @@
 package com.example.focustime
 
+
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -11,6 +14,8 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -21,65 +26,59 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-//import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 import kotlin.math.*
-import androidx.compose.material3.ExperimentalMaterial3Api
-import android.content.Intent
-import android.os.Build
-//import androidx.compose.ui.platform.LocalContext
-
-
+import java.util.Locale
 
 private const val PREFS_NAME = "focus_prefs"
 private const val KEY_END_TIME_MS = "end_time_ms"
 private const val KEY_DURATION_MIN = "duration_min"
+
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
             MaterialTheme {
-                FocusApp(this)
+                FocusApp()
             }
         }
     }
 }
 
 @Composable
-private fun FocusApp(context: Context) {
+private fun FocusApp() {
+    val context = LocalContext.current
     val prefs = remember { context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE) }
 
     var endTimeMs by remember { mutableStateOf(prefs.getLong(KEY_END_TIME_MS, 0L)) }
     var durationMin by remember { mutableStateOf(prefs.getInt(KEY_DURATION_MIN, 60)) }
 
-    fun saveEndTime(value: Long) {
-        prefs.edit().putLong(KEY_END_TIME_MS, value).apply()
-        endTimeMs = value
+    val saveEndTime = remember {
+        { value: Long ->
+            prefs.edit().putLong(KEY_END_TIME_MS, value).apply()
+            endTimeMs = value
+        }
     }
 
-    fun saveDurationMin(value: Int) {
-        prefs.edit().putInt(KEY_DURATION_MIN, value).apply()
-        durationMin = value
+    val saveDurationMin = remember {
+        { value: Int ->
+            prefs.edit().putInt(KEY_DURATION_MIN, value).apply()
+            durationMin = value
+        }
     }
 
-    // простой “роутер” экранов
-    var screen by remember { mutableStateOf("main") } // "main" | "apps"
-
-    // тикер времени
+    var screen by remember { mutableStateOf("main") }
     var remainingSeconds by remember { mutableStateOf(0L) }
 
-
     LaunchedEffect(Unit) {
-        // При запуске MainActivity закрываем все BlockActivity
-        val intent = Intent(context, BlockActivity::class.java)
-        intent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
-        context.stopService(Intent(context, BlockActivity::class.java))
+        val stopIntent = Intent(context, BlockActivity::class.java)
+        context.stopService(stopIntent)
     }
 
     LaunchedEffect(endTimeMs) {
@@ -88,7 +87,6 @@ private fun FocusApp(context: Context) {
             val diffMs = endTimeMs - now
             remainingSeconds = if (diffMs > 0) diffMs / 1000 else 0
 
-            // если таймер закончился — сбрасываем фокус
             if (endTimeMs != 0L && diffMs <= 0) {
                 saveEndTime(0L)
             }
@@ -99,7 +97,6 @@ private fun FocusApp(context: Context) {
 
     val isActive = endTimeMs != 0L
 
-    // если мы в настройке разрешённых приложений — показываем этот экран и выходим
     if (screen == "apps") {
         AllowedAppsScreen(onBack = { screen = "main" })
         return
@@ -119,7 +116,8 @@ private fun FocusApp(context: Context) {
         ActiveFocusScreen(
             remainingSeconds = remainingSeconds,
             endTimeMs = endTimeMs,
-            onStop = { saveEndTime(0L) }
+            onStop = { saveEndTime(0L) },
+            onOpenAllowedApps = { screen = "apps" }
         )
     }
 }
@@ -141,7 +139,6 @@ private fun ReadyScreen(
             verticalArrangement = Arrangement.Center,
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-
             Text("Ready", style = MaterialTheme.typography.headlineSmall)
 
             Spacer(Modifier.height(16.dp))
@@ -175,16 +172,22 @@ private fun ReadyScreen(
             Button(onClick = onStart) {
                 Text("Start")
             }
+
+            Spacer(Modifier.height(12.dp))
+
+            OutlinedButton(onClick = onOpenAllowedApps) {
+                Text("Разрешенные приложения")
+            }
         }
     }
 }
-
 
 @Composable
 private fun ActiveFocusScreen(
     remainingSeconds: Long,
     endTimeMs: Long,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onOpenAllowedApps: () -> Unit
 ) {
     val mm = remainingSeconds / 60
     val ss = remainingSeconds % 60
@@ -210,15 +213,50 @@ private fun ActiveFocusScreen(
             Spacer(Modifier.height(18.dp))
             Text(timeLeftText, style = MaterialTheme.typography.displayMedium)
 
-            Spacer(Modifier.height(24.dp))
-            OutlinedButton(onClick = onStop) { Text("Stop") }
+            Spacer(Modifier.height(32.dp))
+
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Button(
+                    onClick = onStop,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    ),
+                    modifier = Modifier.fillMaxWidth(0.8f)
+                ) {
+                    Text("Остановить фокус")
+                }
+
+                OutlinedButton(
+                    onClick = onOpenAllowedApps,
+                    modifier = Modifier.fillMaxWidth(0.8f)
+                ) {
+                    // Используем иконку List вместо Apps
+                    Icon(
+                        imageVector = Icons.Filled.List,
+                        contentDescription = "Разрешенные приложения",
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text("Разрешенные приложения")
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            Text(
+                text = "Добавьте в исключения музыку, навигатор и другие нужные приложения",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+                textAlign = TextAlign.Center
+            )
         }
     }
 }
 
-/**
- * Круглый выбор минут: 1..90
- */
 @Composable
 private fun CircularMinutePicker(
     minutes: Int,
@@ -241,7 +279,7 @@ private fun CircularMinutePicker(
 
     fun angleRadToMinutes(angleRad: Float): Int {
         var deg = Math.toDegrees(angleRad.toDouble()).toFloat()
-        deg = (deg + 360f + 90f) % 360f // 0..360, 0 = верх
+        deg = (deg + 360f + 90f) % 360f
         val t = deg / 360f
         val m = (minMinutes + t * (maxMinutes - minMinutes)).roundToInt()
         return m.coerceIn(minMinutes, maxMinutes)
@@ -307,8 +345,6 @@ private fun CircularMinutePicker(
     }
 }
 
-// ---------- Allowed apps UI + Store ----------
-
 data class AppRow(
     val label: String,
     val pkg: String
@@ -324,13 +360,13 @@ fun AllowedAppsScreen(
 
     var query by remember { mutableStateOf("") }
 
-    // список приложений (загружаем один раз)
     val apps = remember {
+        // 1.1. Ваш старый код для приложений с иконкой (лаунчером)
         val launchIntent = Intent(Intent.ACTION_MAIN).apply {
             addCategory(Intent.CATEGORY_LAUNCHER)
         }
 
-        val resolved = if (Build.VERSION.SDK_INT >= 33) {
+        val resolvedLauncherApps = if (Build.VERSION.SDK_INT >= 33) {
             pm.queryIntentActivities(
                 launchIntent,
                 PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
@@ -338,28 +374,55 @@ fun AllowedAppsScreen(
         } else {
             @Suppress("DEPRECATION")
             pm.queryIntentActivities(launchIntent, PackageManager.MATCH_DEFAULT_ONLY)
+        }.map { ri ->
+            val pkg = ri.activityInfo.packageName
+            AppRow(
+                label = ri.loadLabel(pm)?.toString() ?: pkg,
+                pkg = pkg
+            )
         }
 
-        resolved
-            .map { ri ->
-                val pkg = ri.activityInfo.packageName
-                AppRow(
-                    label = ri.loadLabel(pm)?.toString() ?: pkg,
-                    pkg = pkg
-                )
+        // 1.2. НОВЫЙ КОД: Получаем ВСЕ установленные пакеты
+        val allPackages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // API 33+
+            pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            pm.getInstalledPackages(0)
+        }
+
+        // 1.3. Объединяем списки, избегая дубликатов
+        val combinedList = mutableListOf<AppRow>().apply {
+            // Сначала добавляем приложения с иконками
+            addAll(resolvedLauncherApps)
+
+            // Собираем set уже добавленных package names для быстрой проверки
+            val alreadyAddedPackages = resolvedLauncherApps.map { it.pkg }.toSet()
+
+            // Добавляем остальные приложения, которых ещё нет в списке
+            for (pkgInfo in allPackages) {
+                val packageName = pkgInfo.packageName
+                if (packageName !in alreadyAddedPackages) {
+                    // ИСПРАВЛЕННАЯ СТРОКА: безопасный вызов с значением по умолчанию
+                    val label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: packageName
+                    add(AppRow(label, packageName))
+                }
             }
-            .distinctBy { it.pkg }
-            .sortedBy { it.label.lowercase(Locale.getDefault()) }
+        }
+
+        // 1.4. Возвращаем итоговый отсортированный список
+        combinedList.distinctBy { it.pkg }.sortedBy { it.label.lowercase(Locale.getDefault()) }
     }
 
+    // 2. Whitelist (теперь ЭТО отдельные объявления)
     var allowed by remember { mutableStateOf(AllowedAppsStore.getAllowed(context).toMutableSet()) }
 
-    // всегда разрешаем само приложение (чтобы не заблокировать себя)
+    // 3. Автоматически добавляем своё приложение в whitelist
     LaunchedEffect(Unit) {
         allowed.add("com.example.focustime")
         AllowedAppsStore.setAllowed(context, allowed)
     }
 
+    // 4. Фильтрация по запросу (использует уже вычисленный `apps`)
     val filtered = remember(query, apps) {
         if (query.isBlank()) apps
         else apps.filter {
@@ -368,6 +431,7 @@ fun AllowedAppsScreen(
         }
     }
 
+    // 5. UI (Scaffold и т.д.)
     Scaffold(
         topBar = {
             TopAppBar(
@@ -439,10 +503,6 @@ fun AllowedAppsScreen(
     }
 }
 
-/**
- * Хранилище разрешённых пакетов (whitelist)
- * SharedPreferences StringSet
- */
 object AllowedAppsStore {
     private const val PREFS = "allowed_apps_prefs"
     private const val KEY_ALLOWED = "allowed_pkgs"
