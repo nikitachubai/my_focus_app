@@ -1,10 +1,7 @@
 package com.example.focustime
 
-
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -14,8 +11,6 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -26,19 +21,18 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
-import java.util.*
-import kotlin.math.*
+import java.util.Date
 import java.util.Locale
+import kotlin.math.*
 
 private const val PREFS_NAME = "focus_prefs"
 private const val KEY_END_TIME_MS = "end_time_ms"
 private const val KEY_DURATION_MIN = "duration_min"
-
+private const val KEY_START_TIME_MS = "start_time_ms"
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -58,28 +52,50 @@ private fun FocusApp() {
 
     var endTimeMs by remember { mutableStateOf(prefs.getLong(KEY_END_TIME_MS, 0L)) }
     var durationMin by remember { mutableStateOf(prefs.getInt(KEY_DURATION_MIN, 60)) }
+    var startTimeMs by remember { mutableStateOf(prefs.getLong(KEY_START_TIME_MS, 0L)) }
 
-    val saveEndTime = remember {
-        { value: Long ->
-            prefs.edit().putLong(KEY_END_TIME_MS, value).apply()
-            endTimeMs = value
-        }
+    fun saveEndTime(value: Long) {
+        prefs.edit().putLong(KEY_END_TIME_MS, value).apply()
+        endTimeMs = value
     }
 
-    val saveDurationMin = remember {
-        { value: Int ->
-            prefs.edit().putInt(KEY_DURATION_MIN, value).apply()
-            durationMin = value
-        }
+    fun saveDurationMin(value: Int) {
+        prefs.edit().putInt(KEY_DURATION_MIN, value).apply()
+        durationMin = value
     }
 
-    var screen by remember { mutableStateOf("main") }
+    fun saveStartTime(value: Long) {
+        prefs.edit().putLong(KEY_START_TIME_MS, value).apply()
+        startTimeMs = value
+    }
+
+    fun finishSession(completed: Boolean) {
+        val now = System.currentTimeMillis()
+        val s = startTimeMs
+        val planned = endTimeMs
+
+        // если старт реально был — сохраняем
+        if (s > 0L) {
+            FocusStatsStore.addSession(
+                context,
+                FocusSession(
+                    startMs = s,
+                    endMs = now,
+                    plannedEndMs = planned,
+                    completed = completed
+                )
+            )
+        }
+
+        saveEndTime(0L)
+        saveStartTime(0L)
+    }
+
+    // роутинг
+    var screen by remember { mutableStateOf("main") } // main | apps | stats
+
+    // тикер
     var remainingSeconds by remember { mutableStateOf(0L) }
-
-    LaunchedEffect(Unit) {
-        val stopIntent = Intent(context, BlockActivity::class.java)
-        context.stopService(stopIntent)
-    }
 
     LaunchedEffect(endTimeMs) {
         while (true) {
@@ -87,8 +103,9 @@ private fun FocusApp() {
             val diffMs = endTimeMs - now
             remainingSeconds = if (diffMs > 0) diffMs / 1000 else 0
 
+            // таймер закончился
             if (endTimeMs != 0L && diffMs <= 0) {
-                saveEndTime(0L)
+                finishSession(completed = true)
             }
 
             delay(1000)
@@ -97,9 +114,15 @@ private fun FocusApp() {
 
     val isActive = endTimeMs != 0L
 
-    if (screen == "apps") {
-        AllowedAppsScreen(onBack = { screen = "main" })
-        return
+    when (screen) {
+        "apps" -> {
+            AllowedAppsScreen(onBack = { screen = "main" })
+            return
+        }
+        "stats" -> {
+            StatsScreen(onBack = { screen = "main" })
+            return
+        }
     }
 
     if (!isActive) {
@@ -107,17 +130,21 @@ private fun FocusApp() {
             durationMin = durationMin,
             onDurationChange = { saveDurationMin(it) },
             onStart = {
-                val newEnd = System.currentTimeMillis() + durationMin * 60_000L
+                val now = System.currentTimeMillis()
+                val newEnd = now + durationMin * 60_000L
+                saveStartTime(now)
                 saveEndTime(newEnd)
             },
-            onOpenAllowedApps = { screen = "apps" }
+            onOpenAllowedApps = { screen = "apps" },
+            onOpenStats = { screen = "stats" }
         )
     } else {
         ActiveFocusScreen(
             remainingSeconds = remainingSeconds,
             endTimeMs = endTimeMs,
-            onStop = { saveEndTime(0L) },
-            onOpenAllowedApps = { screen = "apps" }
+            onStop = { finishSession(completed = false) },
+            onOpenAllowedApps = { screen = "apps" },
+            onOpenStats = { screen = "stats" }
         )
     }
 }
@@ -127,10 +154,9 @@ private fun ReadyScreen(
     durationMin: Int,
     onDurationChange: (Int) -> Unit,
     onStart: () -> Unit,
-    onOpenAllowedApps: () -> Unit
+    onOpenAllowedApps: () -> Unit,
+    onOpenStats: () -> Unit
 ) {
-    val context = LocalContext.current
-
     Surface(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -141,20 +167,11 @@ private fun ReadyScreen(
         ) {
             Text("Ready", style = MaterialTheme.typography.headlineSmall)
 
-            Spacer(Modifier.height(16.dp))
-
-            Button(
-                onClick = { openAccessibilitySettings(context) }
-            ) {
-                Text("Включить Accessibility")
-            }
-
             Spacer(Modifier.height(12.dp))
 
-            Button(
-                onClick = { openUsageStatsSettings(context) }
-            ) {
-                Text("Включить Usage Access")
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = onOpenAllowedApps) { Text("Приложения") }
+                OutlinedButton(onClick = onOpenStats) { Text("Статистика") }
             }
 
             Spacer(Modifier.height(24.dp))
@@ -169,15 +186,7 @@ private fun ReadyScreen(
 
             Spacer(Modifier.height(20.dp))
 
-            Button(onClick = onStart) {
-                Text("Start")
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            OutlinedButton(onClick = onOpenAllowedApps) {
-                Text("Разрешенные приложения")
-            }
+            Button(onClick = onStart) { Text("Start") }
         }
     }
 }
@@ -187,7 +196,8 @@ private fun ActiveFocusScreen(
     remainingSeconds: Long,
     endTimeMs: Long,
     onStop: () -> Unit,
-    onOpenAllowedApps: () -> Unit
+    onOpenAllowedApps: () -> Unit,
+    onOpenStats: () -> Unit
 ) {
     val mm = remainingSeconds / 60
     val ss = remainingSeconds % 60
@@ -213,50 +223,96 @@ private fun ActiveFocusScreen(
             Spacer(Modifier.height(18.dp))
             Text(timeLeftText, style = MaterialTheme.typography.displayMedium)
 
-            Spacer(Modifier.height(32.dp))
+            Spacer(Modifier.height(16.dp))
 
-            Column(
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Button(
-                    onClick = onStop,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.error,
-                        contentColor = MaterialTheme.colorScheme.onError
-                    ),
-                    modifier = Modifier.fillMaxWidth(0.8f)
-                ) {
-                    Text("Остановить фокус")
-                }
-
-                OutlinedButton(
-                    onClick = onOpenAllowedApps,
-                    modifier = Modifier.fillMaxWidth(0.8f)
-                ) {
-                    // Используем иконку List вместо Apps
-                    Icon(
-                        imageVector = Icons.Filled.List,
-                        contentDescription = "Разрешенные приложения",
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text("Разрешенные приложения")
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                OutlinedButton(onClick = onOpenAllowedApps) { Text("Приложения") }
+                OutlinedButton(onClick = onOpenStats) { Text("Статистика") }
             }
 
             Spacer(Modifier.height(16.dp))
-
-            Text(
-                text = "Добавьте в исключения музыку, навигатор и другие нужные приложения",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.outline,
-                textAlign = TextAlign.Center
-            )
+            OutlinedButton(onClick = onStop) { Text("Stop") }
         }
     }
 }
 
+/**
+ * Экран статистики (простая версия)
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StatsScreen(onBack: () -> Unit) {
+    val context = LocalContext.current
+    val sessions = remember { FocusStatsStore.getSessions(context) }.reversed()
+
+    val totalMs = remember(sessions) { sessions.sumOf { it.durationMs } }
+    val completedCount = remember(sessions) { sessions.count { it.completed } }
+
+    fun formatDuration(ms: Long): String {
+        val totalMin = (ms / 60_000L).coerceAtLeast(0L)
+        val h = totalMin / 60
+        val m = totalMin % 60
+        return if (h > 0) "${h}ч ${m}м" else "${m}м"
+    }
+
+    val dtFmt = remember { SimpleDateFormat("dd.MM HH:mm", Locale.getDefault()) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Text("Статистика") },
+                navigationIcon = { TextButton(onClick = onBack) { Text("Назад") } }
+            )
+        }
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .padding(padding)
+                .fillMaxSize()
+                .padding(16.dp)
+        ) {
+            Text("Сессий: ${sessions.size}", style = MaterialTheme.typography.titleMedium)
+            Text("Завершено: $completedCount", style = MaterialTheme.typography.bodyMedium)
+            Text("Фокус всего: ${formatDuration(totalMs)}", style = MaterialTheme.typography.bodyMedium)
+
+            Spacer(Modifier.height(16.dp))
+
+            if (sessions.isEmpty()) {
+                Text("Пока нет записей. Запусти фокус — и тут появится история.")
+            } else {
+                LazyColumn(modifier = Modifier.fillMaxSize()) {
+                    items(sessions, key = { it.startMs }) { s ->
+                        val start = dtFmt.format(Date(s.startMs))
+                        val dur = formatDuration(s.durationMs)
+                        val status = if (s.completed) "✅" else "⛔"
+
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(status)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text("$start • $dur", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    if (s.completed) "завершено" else "остановлено",
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Круглый выбор минут: 1..90
+ */
 @Composable
 private fun CircularMinutePicker(
     minutes: Int,
@@ -342,178 +398,5 @@ private fun CircularMinutePicker(
             Text(text = "минут", style = MaterialTheme.typography.bodyMedium)
             Text(text = "1–90", style = MaterialTheme.typography.bodySmall)
         }
-    }
-}
-
-data class AppRow(
-    val label: String,
-    val pkg: String
-)
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun AllowedAppsScreen(
-    onBack: () -> Unit
-) {
-    val context = LocalContext.current
-    val pm = context.packageManager
-
-    var query by remember { mutableStateOf("") }
-
-    val apps = remember {
-        // 1.1. Ваш старый код для приложений с иконкой (лаунчером)
-        val launchIntent = Intent(Intent.ACTION_MAIN).apply {
-            addCategory(Intent.CATEGORY_LAUNCHER)
-        }
-
-        val resolvedLauncherApps = if (Build.VERSION.SDK_INT >= 33) {
-            pm.queryIntentActivities(
-                launchIntent,
-                PackageManager.ResolveInfoFlags.of(PackageManager.MATCH_DEFAULT_ONLY.toLong())
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            pm.queryIntentActivities(launchIntent, PackageManager.MATCH_DEFAULT_ONLY)
-        }.map { ri ->
-            val pkg = ri.activityInfo.packageName
-            AppRow(
-                label = ri.loadLabel(pm)?.toString() ?: pkg,
-                pkg = pkg
-            )
-        }
-
-        // 1.2. НОВЫЙ КОД: Получаем ВСЕ установленные пакеты
-        val allPackages = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) { // API 33+
-            pm.getInstalledPackages(PackageManager.PackageInfoFlags.of(0))
-        } else {
-            @Suppress("DEPRECATION")
-            pm.getInstalledPackages(0)
-        }
-
-        // 1.3. Объединяем списки, избегая дубликатов
-        val combinedList = mutableListOf<AppRow>().apply {
-            // Сначала добавляем приложения с иконками
-            addAll(resolvedLauncherApps)
-
-            // Собираем set уже добавленных package names для быстрой проверки
-            val alreadyAddedPackages = resolvedLauncherApps.map { it.pkg }.toSet()
-
-            // Добавляем остальные приложения, которых ещё нет в списке
-            for (pkgInfo in allPackages) {
-                val packageName = pkgInfo.packageName
-                if (packageName !in alreadyAddedPackages) {
-                    // ИСПРАВЛЕННАЯ СТРОКА: безопасный вызов с значением по умолчанию
-                    val label = pkgInfo.applicationInfo?.loadLabel(pm)?.toString() ?: packageName
-                    add(AppRow(label, packageName))
-                }
-            }
-        }
-
-        // 1.4. Возвращаем итоговый отсортированный список
-        combinedList.distinctBy { it.pkg }.sortedBy { it.label.lowercase(Locale.getDefault()) }
-    }
-
-    // 2. Whitelist (теперь ЭТО отдельные объявления)
-    var allowed by remember { mutableStateOf(AllowedAppsStore.getAllowed(context).toMutableSet()) }
-
-    // 3. Автоматически добавляем своё приложение в whitelist
-    LaunchedEffect(Unit) {
-        allowed.add("com.example.focustime")
-        AllowedAppsStore.setAllowed(context, allowed)
-    }
-
-    // 4. Фильтрация по запросу (использует уже вычисленный `apps`)
-    val filtered = remember(query, apps) {
-        if (query.isBlank()) apps
-        else apps.filter {
-            it.label.contains(query, ignoreCase = true) ||
-                    it.pkg.contains(query, ignoreCase = true)
-        }
-    }
-
-    // 5. UI (Scaffold и т.д.)
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = { Text("Разрешённые приложения") },
-                navigationIcon = {
-                    TextButton(onClick = onBack) { Text("Назад") }
-                }
-            )
-        }
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .padding(padding)
-                .fillMaxSize()
-                .padding(16.dp)
-        ) {
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                label = { Text("Поиск") }
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            Text(
-                "Во время фокуса всё, кроме отмеченных, будет блокироваться.",
-                style = MaterialTheme.typography.bodySmall
-            )
-
-            Spacer(Modifier.height(12.dp))
-
-            LazyColumn(modifier = Modifier.fillMaxSize()) {
-                items(filtered, key = { it.pkg }) { app ->
-                    val checked = allowed.contains(app.pkg)
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                val newAllowed = allowed.toMutableSet()
-                                if (checked) newAllowed.remove(app.pkg) else newAllowed.add(app.pkg)
-                                allowed = newAllowed
-                                AllowedAppsStore.setAllowed(context, allowed)
-                            }
-                            .padding(vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Checkbox(
-                            checked = checked,
-                            onCheckedChange = { isChecked ->
-                                val newAllowed = allowed.toMutableSet()
-                                if (isChecked) newAllowed.add(app.pkg) else newAllowed.remove(app.pkg)
-                                allowed = newAllowed
-                                AllowedAppsStore.setAllowed(context, allowed)
-                            }
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(app.label, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(app.pkg, style = MaterialTheme.typography.bodySmall, maxLines = 1)
-                        }
-                    }
-
-                    Divider()
-                }
-            }
-        }
-    }
-}
-
-object AllowedAppsStore {
-    private const val PREFS = "allowed_apps_prefs"
-    private const val KEY_ALLOWED = "allowed_pkgs"
-
-    fun getAllowed(context: Context): Set<String> {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        return prefs.getStringSet(KEY_ALLOWED, emptySet()) ?: emptySet()
-    }
-
-    fun setAllowed(context: Context, pkgs: Set<String>) {
-        val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-        prefs.edit().putStringSet(KEY_ALLOWED, pkgs).apply()
     }
 }
